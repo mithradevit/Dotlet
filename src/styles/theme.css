@@ -1,0 +1,227 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 13px;
+  /* Palette: blue #c1d7ff · pink #ffc1fa · yellow #fefa75 */
+  --background: #fffef0;
+  --foreground: #1a1040;
+  --card: #ffffff;
+  --card-foreground: #1a1040;
+  --popover: #ffffff;
+  --popover-foreground: #1a1040;
+  --primary: #3d5ef5;
+  --primary-foreground: #fefa75;
+  --secondary: #f5e2ff;
+  --secondary-foreground: #1a1040;
+  --muted: #e4edff;
+  --muted-foreground: #6670b0;
+  --accent: #fefa75;
+  --accent-foreground: #1a1040;
+  --destructive: #e03060;
+  --destructive-foreground: #fff;
+  --border: rgba(61, 94, 245, 0.12);
+  --input: #f5e2ff;
+  --input-background: #f5e2ff;
+  --switch-background: #c1d7ff;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #3d5ef5;
+  --chart-1: #3d5ef5;
+  --chart-2: #ffc1fa;
+  --chart-3: #fefa75;
+  --chart-4: #c1d7ff;
+  --chart-5: #f77847;
+  --radius: 0.375rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1a1040;
+  --sidebar-primary: #3d5ef5;
+  --sidebar-primary-foreground: #fefa75;
+  --sidebar-accent: #f5e2ff;
+  --sidebar-accent-foreground: #1a1040;
+  --sidebar-border: rgba(61, 94, 245, 0.10);
+  --sidebar-ring: #3d5ef5;
+  font-family: 'Kode Mono', monospace;
+}
+
+.dark {
+  --background: #0e0e12;
+  --foreground: #dddde8;
+  --card: #18181f;
+  --card-foreground: #dddde8;
+  --popover: #1f1f29;
+  --popover-foreground: #dddde8;
+  --primary: #8b6ff5;
+  --primary-foreground: #0e0e12;
+  --secondary: #26262f;
+  --secondary-foreground: #b4b4c8;
+  --muted: #1c1c24;
+  --muted-foreground: #64647a;
+  --accent: #8b6ff5;
+  --accent-foreground: #0e0e12;
+  --destructive: #ef4444;
+  --destructive-foreground: #fff;
+  --border: rgba(255, 255, 255, 0.07);
+  --input: #26262f;
+  --ring: #8b6ff5;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --sidebar: #18181f;
+  --sidebar-foreground: #dddde8;
+  --sidebar-primary: #8b6ff5;
+  --sidebar-primary-foreground: #0e0e12;
+  --sidebar-accent: #26262f;
+  --sidebar-accent-foreground: #dddde8;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-ring: #8b6ff5;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@keyframes dot-enter {
+  from { transform: scale(0); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.dot-enter {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dot-enter 180ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Kode Mono', monospace;
+  }
+
+  /**
+  * Default typography styles for HTML elements (h1-h4, p, label, button, input).
+  * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
+  */
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  h1 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h4 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  label {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  button {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  input {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+}
+
+/* ── Colour picker channel sliders ──────────────────────────────────────────
+   The gradient track is a sibling div, so the native input must be fully
+   transparent and only contribute its thumb. */
+.dotlet-channel {
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+.dotlet-channel::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 100%;
+}
+.dotlet-channel::-moz-range-track {
+  background: transparent;
+  height: 100%;
+}
+.dotlet-channel::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+.dotlet-channel::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
