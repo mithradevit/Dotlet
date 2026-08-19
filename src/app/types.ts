@@ -35,6 +35,21 @@ export interface BrushSettings {
   grain: number;
 }
 
+/**
+ * A text label anchored to canvas space. Exports as a real SVG <text>, so it
+ * stays editable copy in Figma/Illustrator rather than being flattened.
+ */
+export interface TextItem {
+  id: string;
+  x: number;
+  y: number;
+  /** Raw text; newlines become separate tspans. */
+  text: string;
+  size: number;
+  color: string;
+  layerId?: string;
+}
+
 /** A single freehand mark. Points are in canvas logical space. */
 export interface Stroke {
   id: string;

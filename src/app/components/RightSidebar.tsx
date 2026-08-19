@@ -238,12 +238,17 @@ export function RightSidebar(props: RightSidebarProps) {
         {/* ── Brush (freehand only) ── */}
         {props.mode === 'freehand' && (
           <Section id="tour-brush" icon={<Brush size={10} />} label="Brush">
-            <div className="grid grid-cols-3 gap-1.5">
+            {/* Two columns: at three, "Calligraphy" overflowed its cell and
+                had to truncate. Legible labels beat a tighter grid. */}
+            <div className="grid grid-cols-2 gap-1.5">
               {(Object.keys(BRUSH_LABELS) as BrushType[]).map(t => (
                 <button
                   key={t}
                   onClick={() => props.setBrushType(t)}
-                  className={`py-2 rounded-lg text-[9px] font-medium transition-colors ${
+                  title={BRUSH_LABELS[t]}
+                  // min-w-0 + truncate so a long label ("Calligraphy") shrinks
+                  // inside its grid cell instead of running into the edges.
+                  className={`min-w-0 px-1.5 py-2 rounded-lg text-[9px] font-medium truncate transition-colors ${
                     props.brush.type === t
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/70'

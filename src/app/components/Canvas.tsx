@@ -4,7 +4,7 @@ import React, {
 } from 'react';
 import type {
   Dot, Tool, DotShape, ClusterMode, GridSize, CanvasLayer,
-  CanvasMode, Stroke, BrushSettings,
+  CanvasMode, Stroke, BrushSettings, TextItem,
 } from '../types';
 import { renderDotElement } from './dotShapes';
 import { StrokeShape } from './StrokeRender';
@@ -74,6 +74,8 @@ export interface CanvasHandle {
   zoomTo100: () => void;
   /** Select these dot ids (expanded to whole groups). Used by the Layers panel. */
   selectIds: (ids: string[]) => void;
+  /** Centre of the visible area in canvas coords — where new text is anchored. */
+  getViewCenter: () => { x: number; y: number };
 }
 
 interface CanvasProps {
@@ -109,6 +111,10 @@ interface CanvasProps {
   brush: BrushSettings;
   onStrokeComplete: (s: Stroke) => void;
   onEraseStrokes: (ids: string[]) => void;
+  onMoveStrokes: (ids: string[], dx: number, dy: number) => void;
+  /** Text labels — shared by both canvas modes. */
+  texts: TextItem[];
+  onEraseTexts: (ids: string[]) => void;
 }
 
 export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
@@ -121,7 +127,8 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     customLayers, activeLayerId,
     nextMarkId, nextClusterId,
     onMarkComplete, onZoomChange, onSelectionChange,
-    mode, strokes, brush, onStrokeComplete, onEraseStrokes,
+    mode, strokes, brush, onStrokeComplete, onEraseStrokes, onMoveStrokes,
+    texts, onEraseTexts,
   },
   ref,
 ) {
@@ -185,6 +192,14 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     zoomToFit,
     zoomTo100,
     selectIds: (ids: string[]) => setSelectedIds(expandToGroupsRef.current(new Set(ids))),
+    getViewCenter: () => {
+      const el = containerRef.current;
+      if (!el) return { x: 0, y: 0 };
+      return {
+        x: (el.offsetWidth / 2 - panRef.current.x) / zoomRef.current,
+        y: (el.offsetHeight / 2 - panRef.current.y) / zoomRef.current,
+      };
+    },
   }), [zoomToFit, zoomTo100]);
   useEffect(() => { zoomToFit(); }, []); // eslint-disable-line
   useEffect(() => { zoomToFit(); }, [gridSize]); // eslint-disable-line
@@ -306,6 +321,24 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
     liveRef.current = next;
     setLive(next);
   }, [brush.streamline]);
+
+  /** Per-stroke bounding boxes, for marquee selection and selection outlines. */
+  const strokeBoxes = useMemo(() => {
+    const m = new Map<string, { x1: number; y1: number; x2: number; y2: number }>();
+    for (const s of strokes) {
+      const pad = s.brush.size / 2 + 2;
+      let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+      for (let i = 0; i + 2 < s.points.length; i += 3) {
+        const x = s.points[i], y = s.points[i + 1];
+        if (x < x1) x1 = x;
+        if (y < y1) y1 = y;
+        if (x > x2) x2 = x;
+        if (y > y2) y2 = y;
+      }
+      if (Number.isFinite(x1)) m.set(s.id, { x1: x1 - pad, y1: y1 - pad, x2: x2 + pad, y2: y2 + pad });
+    }
+    return m;
+  }, [strokes]);
 
   /** Hit-test strokes for the eraser: within half a nib of any sample. */
   const strokesNear = useCallback((lx: number, ly: number, radius: number): string[] => {
@@ -492,6 +525,33 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       return;
     }
 
+    // --- Select tool, freehand: operates on strokes, not dots ---
+    if (mode === 'freehand' && tool === 'move') {
+      const { x: lx, y: ly } = getLogical(e.clientX, e.clientY);
+      // Generous pick radius so thin strokes are still easy to grab.
+      const hit = strokesNear(lx, ly, 6)[0];
+
+      if (hit) {
+        const base = selectedIds.has(hit)
+          ? selectedIds
+          : e.shiftKey
+            ? new Set<string>([...selectedIds, hit])
+            : new Set<string>([hit]);
+        const next = expandToGroups(base);
+        setSelectedIds(next);
+        isDraggingDotsRef.current = true;
+        setIsDraggingDots(true);
+        moveStartRef.current = { x: lx, y: ly };
+        setDragOffset({ dCol: 0, dRow: 0 });
+      } else {
+        setSelectedIds(new Set());
+        isRubberBandingRef.current = true;
+        rubberBandStartRef.current = { x: lx, y: ly };
+        setRubberBand({ x1: lx, y1: ly, x2: lx, y2: ly });
+      }
+      return;
+    }
+
     // --- Move tool ---
     if (tool === 'move') {
       const { x: lx, y: ly } = getLogical(e.clientX, e.clientY);
@@ -573,6 +633,28 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
       return;
     }
 
+    // --- Select tool, freehand: drag or marquee over strokes ---
+    if (mode === 'freehand' && tool === 'move') {
+      const { x: lx, y: ly } = getLogical(e.clientX, e.clientY);
+      if (isDraggingDotsRef.current) {
+        // Freehand isn't lattice-snapped, so the offset is in raw px. dCol/dRow
+        // carry it unrounded rather than as whole grid cells.
+        setDragOffset({ dCol: lx - moveStartRef.current.x, dRow: ly - moveStartRef.current.y });
+      } else if (isRubberBandingRef.current) {
+        const { x: sx, y: sy } = rubberBandStartRef.current;
+        setRubberBand({ x1: sx, y1: sy, x2: lx, y2: ly });
+        const minX = Math.min(sx, lx), maxX = Math.max(sx, lx);
+        const minY = Math.min(sy, ly), maxY = Math.max(sy, ly);
+        const picked = new Set<string>();
+        strokeBoxes.forEach((b, id) => {
+          // Intersect, not contain — a marquee clipping part of a stroke takes it.
+          if (b.x2 >= minX && b.x1 <= maxX && b.y2 >= minY && b.y1 <= maxY) picked.add(id);
+        });
+        setSelectedIds(expandToGroups(picked));
+      }
+      return;
+    }
+
     // --- Freehand mode ---
     if (mode === 'freehand' && isFreehandDrawing.current) {
       if (tool === 'eraser') {
@@ -637,6 +719,21 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
   const handlePointerUp = useCallback(() => {
     // Pan
     if (isPanning.current) { isPanning.current = false; setPanActive(false); return; }
+
+    // --- Select tool, freehand ---
+    if (mode === 'freehand' && tool === 'move') {
+      if (isDraggingDotsRef.current) {
+        isDraggingDotsRef.current = false;
+        setIsDraggingDots(false);
+        const { dCol: dx, dRow: dy } = dragOffset;
+        if (dx !== 0 || dy !== 0) onMoveStrokes([...selectedIds], dx, dy);
+        setDragOffset({ dCol: 0, dRow: 0 });
+      } else if (isRubberBandingRef.current) {
+        isRubberBandingRef.current = false;
+        setRubberBand(null);
+      }
+      return;
+    }
 
     // --- Freehand: commit the live stroke as one history entry ---
     if (mode === 'freehand') {
@@ -804,11 +901,60 @@ export const Canvas = forwardRef<CanvasHandle, CanvasProps>(function Canvas(
                   const l = customLayers.find(x => x.id === s.layerId);
                   if (l && !l.visible) return null;
                 } else if (!artLayerVisible) return null;
-                return <StrokeShape key={s.id} stroke={s} />;
+                // Selected strokes follow the cursor live during a drag.
+                const sel = selectedIds.has(s.id);
+                const moving = sel && isDraggingDots && (dragOffset.dCol !== 0 || dragOffset.dRow !== 0);
+                return (
+                  <g key={s.id} transform={moving ? `translate(${dragOffset.dCol} ${dragOffset.dRow})` : undefined}>
+                    <StrokeShape stroke={s} />
+                  </g>
+                );
               })}
               {live && <StrokeShape stroke={live} />}
             </g>
           )}
+
+          {/* Text labels — real <text>, so they export as editable copy.
+              Click with the Eraser to remove one. */}
+          {texts.map(t => {
+            if (t.layerId) {
+              const l = customLayers.find(x => x.id === t.layerId);
+              if (l && !l.visible) return null;
+            }
+            const lines = t.text.split('\n');
+            return (
+              <text
+                key={t.id}
+                x={t.x} y={t.y}
+                fill={t.color}
+                fontSize={t.size}
+                fontFamily="'Kode Mono', monospace"
+                style={{ pointerEvents: tool === 'eraser' ? 'auto' : 'none', cursor: tool === 'eraser' ? 'cell' : 'default' }}
+                onPointerDown={tool === 'eraser' ? () => onEraseTexts([t.id]) : undefined}
+              >
+                {lines.map((ln, i) => (
+                  <tspan key={i} x={t.x} dy={i === 0 ? 0 : t.size * 1.35}>{ln || ' '}</tspan>
+                ))}
+              </text>
+            );
+          })}
+
+          {/* Selection outlines for strokes */}
+          {mode === 'freehand' && tool === 'move' && [...selectedIds].map(id => {
+            const b = strokeBoxes.get(id);
+            if (!b) return null;
+            const moving = isDraggingDots ? dragOffset : { dCol: 0, dRow: 0 };
+            return (
+              <rect
+                key={`selbox-${id}`}
+                x={b.x1 + moving.dCol} y={b.y1 + moving.dRow}
+                width={b.x2 - b.x1} height={b.y2 - b.y1}
+                fill="none" stroke={dotColor} strokeWidth={sw(1)}
+                strokeDasharray={`${sw(4)} ${sw(3)}`} opacity={0.55}
+                rx={sw(3)}
+              />
+            );
+          })}
 
           {/* Gooey dots (non-selected during move drag) — per-layer visibility
               is already applied in gooeyDots. */}

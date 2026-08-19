@@ -8,10 +8,10 @@ import { FileManager, SaveButton, type SaveStatus, type DotletFile, type CanvasS
 import { getDotSVGString } from './components/dotShapes';
 import type {
   Dot, Tool, DotShape, ClusterMode, GridSize, CanvasLayer,
-  CanvasMode, Stroke, BrushSettings, BrushType,
+  CanvasMode, Stroke, BrushSettings, BrushType, TextItem,
 } from './types';
 import { alphaToPathData } from './lib/trace';
-import { BRUSH_PRESETS } from './lib/stroke';
+import { BRUSH_PRESETS, strokeBounds, strokeToSVG } from './lib/stroke';
 import { ProductTour, TourWelcomeModal, type TourStep } from './components/ProductTour';
 import { HelpCircle, Pin, PinOff } from 'lucide-react'; // pin panel toggle
 
@@ -514,8 +514,16 @@ export default function App() {
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [brush, setBrush] = useState<BrushSettings>(BRUSH_PRESETS.pen);
   const strokeHistory = useRef<{ stack: Stroke[][]; index: number }>({ stack: [[]], index: 0 });
+  /**
+   * Synchronous mirror of `strokes`. Mutations must chain off this rather than
+   * the `strokes` closure: the eraser fires on every pointermove, and several
+   * of those land in one React batch, where a stale closure would make each
+   * one overwrite the last.
+   */
+  const strokesRef = useRef<Stroke[]>([]);
 
   const pushStrokes = useCallback((next: Stroke[]) => {
+    strokesRef.current = next;
     const { stack, index } = strokeHistory.current;
     const newStack = [...stack.slice(0, index + 1), next].slice(-MAX_HISTORY);
     strokeHistory.current = { stack: newStack, index: newStack.length - 1 };
@@ -523,19 +531,47 @@ export default function App() {
   }, []);
 
   const handleStrokeComplete = useCallback((s: Stroke) => {
-    pushStrokes([...strokes, s]);
-  }, [strokes, pushStrokes]);
+    pushStrokes([...strokesRef.current, s]);
+  }, [pushStrokes]);
 
   const handleEraseStrokes = useCallback((ids: string[]) => {
     const gone = new Set(ids);
-    pushStrokes(strokes.filter(s => !gone.has(s.id)));
-  }, [strokes, pushStrokes]);
+    const next = strokesRef.current.filter(s => !gone.has(s.id));
+    if (next.length !== strokesRef.current.length) pushStrokes(next);
+  }, [pushStrokes]);
+
+  const handleMoveStrokes = useCallback((ids: string[], dx: number, dy: number) => {
+    const move = new Set(ids);
+    pushStrokes(strokesRef.current.map(s => {
+      if (!move.has(s.id)) return s;
+      const pts = s.points.slice();
+      for (let i = 0; i + 2 < pts.length; i += 3) { pts[i] += dx; pts[i + 1] += dy; }
+      return { ...s, points: pts };
+    }));
+  }, [pushStrokes]);
 
   const setBrushType = useCallback((t: BrushType) => {
     // Keep the user's size/opacity when switching, but adopt the preset's
     // character (streamline, grain, nib angle).
     setBrush(prev => ({ ...BRUSH_PRESETS[t], size: prev.size, opacity: BRUSH_PRESETS[t].opacity }));
   }, []);
+
+  // ── Text labels ───────────────────────────────────────────────────────────
+  // Shared by both canvas modes, with their own small undo stack.
+  const [texts, setTexts] = useState<TextItem[]>([]);
+  const textsRef = useRef<TextItem[]>([]);
+  const textHistory = useRef<TextItem[][]>([[]]);
+
+  const pushTexts = useCallback((next: TextItem[]) => {
+    textsRef.current = next;
+    textHistory.current = [...textHistory.current, next].slice(-MAX_HISTORY);
+    setTexts(next);
+  }, []);
+
+  const handleEraseTexts = useCallback((ids: string[]) => {
+    const gone = new Set(ids);
+    pushTexts(textsRef.current.filter(t => !gone.has(t.id)));
+  }, [pushTexts]);
 
   const [zoom, setZoom] = useState(1);
   const history = useHistory();
@@ -554,24 +590,40 @@ export default function App() {
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedDots = useMemo(() => dots.filter(d => selectedSet.has(d.id)), [dots, selectedSet]);
+  const selectedStrokes = useMemo(() => strokes.filter(s => selectedSet.has(s.id)), [strokes, selectedSet]);
 
-  /** True when every selected dot already shares one group. */
+  /** Whichever document type the active mode uses. */
+  const selectedItems = mode === 'freehand' ? selectedStrokes : selectedDots;
+
+  /** True when every selected item already shares one group. */
   const selectionIsGrouped = useMemo(() => {
-    if (selectedDots.length === 0) return false;
-    const g = selectedDots[0].groupId;
-    return !!g && selectedDots.every(d => d.groupId === g);
-  }, [selectedDots]);
+    if (selectedItems.length === 0) return false;
+    const g = selectedItems[0].groupId;
+    return !!g && selectedItems.every(i => i.groupId === g);
+  }, [selectedItems]);
 
   const handleGroup = useCallback(() => {
     if (selectedIds.length < 2) return;
     const gid = crypto.randomUUID();
+    if (mode === 'freehand') {
+      pushStrokes(strokesRef.current.map(s => selectedSet.has(s.id) ? { ...s, groupId: gid } : s));
+      return;
+    }
     const next = dots.map(d => selectedSet.has(d.id) ? { ...d, groupId: gid } : d);
     setDots(next);
     history.push(next);
-  }, [dots, selectedIds.length, selectedSet, history.push]);
+  }, [mode, dots, strokes, pushStrokes, selectedIds.length, selectedSet, history.push]);
 
   const handleUngroup = useCallback(() => {
     if (selectedIds.length === 0) return;
+    if (mode === 'freehand') {
+      pushStrokes(strokesRef.current.map(s => {
+        if (!selectedSet.has(s.id) || !s.groupId) return s;
+        const { groupId, ...rest } = s;
+        return rest as Stroke;
+      }));
+      return;
+    }
     const next = dots.map(d => {
       if (!selectedSet.has(d.id) || !d.groupId) return d;
       const { groupId, ...rest } = d;
@@ -579,7 +631,7 @@ export default function App() {
     });
     setDots(next);
     history.push(next);
-  }, [dots, selectedIds.length, selectedSet, history.push]);
+  }, [mode, dots, strokes, pushStrokes, selectedIds.length, selectedSet, history.push]);
 
   // Undo/redo and Clear act on whichever document type is active — the two
   // modes keep separate history stacks so switching modes never loses work.
@@ -597,6 +649,7 @@ export default function App() {
       const h = strokeHistory.current;
       if (h.index <= 0) return;
       h.index--;
+      strokesRef.current = h.stack[h.index];
       setStrokes(h.stack[h.index]);
       return;
     }
@@ -608,6 +661,7 @@ export default function App() {
       const h = strokeHistory.current;
       if (h.index >= h.stack.length - 1) return;
       h.index++;
+      strokesRef.current = h.stack[h.index];
       setStrokes(h.stack[h.index]);
       return;
     }
@@ -619,6 +673,24 @@ export default function App() {
     setDots([]);
     history.push([]);
   }, [mode, pushStrokes, history.push]);
+
+  /** Anchor composer text at the centre of what the user is currently viewing. */
+  const handleAnchorText = useCallback((value: string) => {
+    const body = value.trim();
+    if (!body) return;
+    const c = canvasRef.current?.getViewCenter() ?? { x: 0, y: 0 };
+    const size = 48;
+    pushTexts([...textsRef.current, {
+      id: `t${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      // Nudge up so a multi-line block sits centred on the view.
+      x: c.x, y: c.y - ((body.split('\n').length - 1) * size * 1.35) / 2,
+      text: body,
+      size,
+      color: dotColor,
+      layerId: activeLayerId ?? undefined,
+    }]);
+    synth.save();
+  }, [pushTexts, dotColor, activeLayerId]);
 
   const addRecentColor = useCallback((c: string) => {
     setRecentColors(prev => [c, ...prev.filter(x => x !== c)].slice(0, 8));
@@ -805,6 +877,60 @@ export default function App() {
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
   };
 
+  /**
+   * Text labels as SVG markup. Emitted as real <text>, not outlines, so they
+   * arrive in Figma/Illustrator as editable copy. XML-escaped.
+   */
+  const textMarkup = useCallback((): string => {
+    const esc = (s: string) => s
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return texts
+      .filter(t => {
+        if (!t.layerId) return true;
+        const l = customLayers.find(x => x.id === t.layerId);
+        return !l || l.visible;
+      })
+      .map(t => {
+        const spans = t.text.split('\n')
+          .map((ln, i) => `<tspan x="${t.x.toFixed(2)}" dy="${i === 0 ? 0 : (t.size * 1.35).toFixed(2)}">${esc(ln || ' ')}</tspan>`)
+          .join('');
+        return `  <text x="${t.x.toFixed(2)}" y="${t.y.toFixed(2)}" fill="${t.color}" font-size="${t.size}" font-family="'Kode Mono', monospace">${spans}</text>`;
+      })
+      .join('\n');
+  }, [texts, customLayers]);
+
+  /**
+   * Freehand SVG. Strokes are already plain paths and circles, so this needs no
+   * tracing pass and no filter — Figma-safe by construction, and what both the
+   * "Vector" and "Editable" buttons produce while in freehand mode.
+   */
+  const buildFreehandSVG = useCallback((transparent?: boolean, subset?: Stroke[]) => {
+    const source = subset ?? strokes;
+    const shown = source.filter(s => {
+      if (s.layerId) {
+        const l = customLayers.find(x => x.id === s.layerId);
+        if (l && !l.visible) return false;
+        return true;
+      }
+      return artLayerVisible;
+    });
+    const b = strokeBounds(shown);
+    const W = Math.max(1, Math.ceil(b.maxX - b.minX));
+    const H = Math.max(1, Math.ceil(b.maxY - b.minY));
+    const bg = !transparent && bgLayerVisible
+      ? `  <rect fill="${bgColor}" x="${b.minX.toFixed(2)}" y="${b.minY.toFixed(2)}" width="${W}" height="${H}"/>\n`
+      : '';
+    const body = shown.map(s => `  ${strokeToSVG(s)}`).filter(t => t.trim()).join('\n');
+    // Labels only on a whole-canvas export; a selection export is just its strokes.
+    const labels = subset ? '' : textMarkup();
+    const svgStr = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- Generated by Dotlet ${ts()} — freehand -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.minX.toFixed(2)} ${b.minY.toFixed(2)} ${W} ${H}" width="${W}" height="${H}">
+${bg}${body}${labels ? '\n' + labels : ''}
+</svg>`;
+    return { svgStr, width: W, height: H, count: shown.length };
+  }, [strokes, customLayers, artLayerVisible, bgLayerVisible, bgColor, textMarkup]);
+
   /** Rasterise an SVG string via an <img>, resolving once decoded. */
   const loadSVG = (svgStr: string): Promise<HTMLImageElement> =>
     new Promise((resolve, reject) => {
@@ -815,9 +941,11 @@ export default function App() {
       img.src = url;
     });
 
-  const renderToCanvas = useCallback((forceTransparent?: boolean, subset?: Dot[]): Promise<HTMLCanvasElement> =>
+  const renderToCanvas = useCallback((forceTransparent?: boolean, subset?: Dot[], strokeSubset?: Stroke[]): Promise<HTMLCanvasElement> =>
     new Promise((resolve, reject) => {
-      const { svgStr, width, height } = buildSVG(forceTransparent, subset);
+      const { svgStr, width, height } = mode === 'freehand'
+        ? buildFreehandSVG(forceTransparent, strokeSubset)
+        : buildSVG(forceTransparent, subset);
       const blob = new Blob([svgStr], { type: 'image/svg+xml' });
       const url = URL.createObjectURL(blob);
       const img = new Image();
@@ -836,16 +964,23 @@ export default function App() {
       };
       img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
       img.src = url;
-    }), [dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread, crispness, outlineMode, outlineWeight, roughness, shadowOpacity, shadowBlur, customLayers]);
+    }), [mode, buildFreehandSVG, dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread, crispness, outlineMode, outlineWeight, roughness, shadowOpacity, shadowBlur, customLayers]);
 
-  // `transparent` drops the background rect — the "Alpha SVG" button passes true.
+  // `transparent` drops the background rect.
   const handleExportSVG = useCallback((transparent?: boolean) => {
+    // Freehand is already plain geometry — no filter to work around.
+    if (mode === 'freehand') {
+      const { svgStr, count } = buildFreehandSVG(transparent);
+      if (!count) return;
+      downloadBlob(new Blob([svgStr], { type: 'image/svg+xml' }), `dotlet-${ts()}-freehand${transparent ? '-alpha' : ''}.svg`);
+      return;
+    }
     // useClass=false (inline fill) so the SVG filter has concrete pixel data to process.
     // CSS-class fill is not reliably resolved by SVG filter pipelines in Illustrator/Inkscape.
     const { svgStr } = buildSVG(transparent);
     const blob = new Blob([svgStr], { type: 'image/svg+xml' });
     downloadBlob(blob, `dotlet-${ts()}${suffix()}${transparent ? '-alpha' : ''}.svg`);
-  }, [dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread, crispness, outlineMode, outlineWeight, roughness, shadowOpacity, shadowBlur, customLayers]);
+  }, [mode, buildFreehandSVG, dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread, crispness, outlineMode, outlineWeight, roughness, shadowOpacity, shadowBlur, customLayers]);
 
   const handleExportPNG = useCallback(async (transparent?: boolean) => {
     const c = await renderToCanvas(transparent);
@@ -885,6 +1020,8 @@ export default function App() {
    * colour pass shares one viewBox so the paths align exactly.
    */
   const handleExportTracedSVG = useCallback(async (transparent?: boolean, subset?: Dot[]) => {
+    // Nothing to trace in freehand — strokes are already filter-free vector.
+    if (mode === 'freehand') { handleExportSVG(transparent); return; }
     const source = subset ?? dots;
     const shown = source.filter(d => {
       if (d.layerId) {
@@ -943,14 +1080,15 @@ export default function App() {
     const bg = !transparent && bgLayerVisible
       ? `  <rect fill="${bgColor}" x="${minX}" y="${minY}" width="${W}" height="${H}"/>\n`
       : '';
+    const labels = subset ? '' : textMarkup();
     const svgStr = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- Generated by Dotlet ${ts()} — traced vector, no filters -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${W} ${H}" width="${W}" height="${H}">
-${bg}${paths.join('\n')}
+${bg}${paths.join('\n')}${labels ? '\n' + labels : ''}
 </svg>`;
     downloadBlob(new Blob([svgStr], { type: 'image/svg+xml' }),
       `dotlet-${ts()}${subset ? '-selection' : ''}-vector${transparent ? '-alpha' : ''}.svg`);
-  }, [dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread,
+  }, [mode, handleExportSVG, dots, dotColor, bgColor, bgLayerVisible, artLayerVisible, gridSize, clusterMode, spread,
       crispness, outlineMode, outlineWeight, customLayers, roughness, shadowOpacity, shadowBlur]);
 
   /**
@@ -959,12 +1097,24 @@ ${bg}${paths.join('\n')}
    * normally wanted without the canvas background behind it.
    */
   const handleExportSelection = useCallback(async (format: 'svg' | 'png', transparent = true) => {
-    if (selectedDots.length === 0) return;
-    // Traced, so a selection dropped into Figma looks like it does on canvas.
+    if (selectedItems.length === 0) return;
+
+    if (mode === 'freehand') {
+      if (format === 'svg') {
+        const { svgStr, count } = buildFreehandSVG(transparent, selectedStrokes);
+        if (count) downloadBlob(new Blob([svgStr], { type: 'image/svg+xml' }), `dotlet-selection-${ts()}.svg`);
+        return;
+      }
+      const c = await renderToCanvas(transparent, undefined, selectedStrokes);
+      c.toBlob(blob => { if (blob) downloadBlob(blob, `dotlet-selection-${ts()}.png`); }, 'image/png');
+      return;
+    }
+
+    // Traced, so a dot selection dropped into Figma looks like it does on canvas.
     if (format === 'svg') { await handleExportTracedSVG(transparent, selectedDots); return; }
     const c = await renderToCanvas(transparent, selectedDots);
     c.toBlob(blob => { if (blob) downloadBlob(blob, `dotlet-selection-${ts()}.png`); }, 'image/png');
-  }, [selectedDots, renderToCanvas, handleExportTracedSVG]);
+  }, [mode, selectedItems.length, selectedStrokes, selectedDots, buildFreehandSVG, renderToCanvas, handleExportTracedSVG]);
 
   const handleCopyPNG = useCallback(async (transparent?: boolean) => {
     const c = await renderToCanvas(transparent);
@@ -1190,6 +1340,9 @@ ${bg}${paths.join('\n')}
             brush={brush}
             onStrokeComplete={handleStrokeComplete}
             onEraseStrokes={handleEraseStrokes}
+            onMoveStrokes={handleMoveStrokes}
+            texts={texts}
+            onEraseTexts={handleEraseTexts}
           />
           <ShapeFloater
             dotShape={dotShape} setDotShape={setDotShape}
@@ -1212,6 +1365,8 @@ ${bg}${paths.join('\n')}
             onCopyPNG={handleCopyPNG}
             soundEnabled={soundEnabled}
             onToggleSound={() => setSoundEnabled(s => !s)}
+            onAnchorText={handleAnchorText}
+            mode={mode}
             selectedCount={selectedIds.length}
             selectionIsGrouped={selectionIsGrouped}
             onGroup={handleGroup}

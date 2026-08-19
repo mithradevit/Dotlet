@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FileText } from 'lucide-react';
-import Vector from '../../imports/Vector/index';
+// The generated Vector component was hardcoded to #1E81FA, an off-brand blue.
+// This is the current mark, in the primary #3D5EF5.
+import dotletLogo from '../../imports/dotlet-logo.svg';
 
 interface TopHeaderProps {
   right?: React.ReactNode;
@@ -56,9 +58,13 @@ export function TopHeader({ right, fileName, onRenameFile }: TopHeaderProps) {
       padding: '0 16px', zIndex: 100, boxSizing: 'border-box',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-        <div style={{ width: 61, height: 22, flexShrink: 0 }}>
-          <Vector />
-        </div>
+        <img
+          src={dotletLogo}
+          alt="Dotlet"
+          width={77}
+          height={23}
+          style={{ display: 'block', flexShrink: 0 }}
+        />
         {fileName !== undefined && onRenameFile && (
           <>
             <span style={{ color: 'rgba(61,94,245,0.25)', fontSize: 14, flexShrink: 0 }}>/</span>

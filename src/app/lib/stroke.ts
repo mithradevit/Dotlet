@@ -201,6 +201,54 @@ export function pencilStamps(pts: SPoint[], brush: BrushSettings, seed = 1): Sta
 
 const f = (n: number) => (Number.isFinite(n) ? n.toFixed(2) : '0');
 
+/** Bounding box of strokes in logical space, padded by each brush's radius. */
+export function strokeBounds(strokes: { points: number[]; brush: BrushSettings }[]) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of strokes) {
+    const pad = s.brush.size / 2 + 2;
+    for (let i = 0; i + 2 < s.points.length; i += 3) {
+      const x = s.points[i], y = s.points[i + 1];
+      if (x - pad < minX) minX = x - pad;
+      if (y - pad < minY) minY = y - pad;
+      if (x + pad > maxX) maxX = x + pad;
+      if (y + pad > maxY) maxY = y + pad;
+    }
+  }
+  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+  return { minX, minY, maxX, maxY };
+}
+
+/**
+ * A stroke as standalone SVG markup — the exact geometry the canvas renders.
+ * Freehand needs no tracing pass: it is already plain paths and circles, so it
+ * is Figma-safe by construction.
+ */
+export function strokeToSVG(
+  stroke: { id: string; points: number[]; color: string; brush: BrushSettings },
+): string {
+  const pts = toPoints(stroke.points);
+  if (pts.length === 0) return '';
+  const op = stroke.brush.opacity / 100;
+
+  if (stroke.brush.type === 'pencil') {
+    let h = 2166136261;
+    for (let i = 0; i < stroke.id.length; i++) {
+      h ^= stroke.id.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const marks = pencilStamps(pts, stroke.brush, h >>> 0)
+      .map(s => `<circle cx="${f(s.x)}" cy="${f(s.y)}" r="${f(s.r)}" fill="${stroke.color}" opacity="${s.o.toFixed(3)}"/>`)
+      .join('');
+    return `<g opacity="${op}">${marks}</g>`;
+  }
+
+  const d = outlinePath(pts, stroke.brush);
+  if (!d) return '';
+  // Marker multiplies where it overlaps, matching the on-canvas blend.
+  const blend = stroke.brush.type === 'marker' ? ' style="mix-blend-mode:multiply"' : '';
+  return `<path d="${d}" fill="${stroke.color}" opacity="${op}"${blend}/>`;
+}
+
 /** Sensible starting settings per brush. */
 export const BRUSH_PRESETS: Record<BrushType, BrushSettings> = {
   'pen':         { type: 'pen',         size: 8,  opacity: 100, streamline: 35, angle: 45, grain: 50 },

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Pen, Eraser, MousePointer2, Hand, Trash2, GripVertical, Undo2, Redo2, Download, Copy, Type, X as XIcon, Volume2, VolumeX, Group, Ungroup } from 'lucide-react';
-import type { Tool } from '../types';
+import type { Tool, CanvasMode } from '../types';
 
 export interface FloatingPaletteProps {
   tool: Tool;
@@ -19,6 +19,10 @@ export interface FloatingPaletteProps {
   soundEnabled: boolean;
   onToggleSound: () => void;
   // ── Selection / grouping (Move tool) ──
+  /** Place composer text on the canvas at the current view centre. */
+  onAnchorText: (text: string) => void;
+  /** Freehand needs no traced variant, so the export menu adapts. */
+  mode: CanvasMode;
   selectedCount: number;
   selectionIsGrouped: boolean;
   onGroup: () => void;
@@ -41,7 +45,7 @@ export function FloatingPalette({
   canUndo, canRedo, onUndo, onRedo,
   onExportSVG, onExportEmbeddedSVG, onExportPNG, onCopyPNG,
   soundEnabled, onToggleSound,
-  selectedCount, selectionIsGrouped, onGroup, onUngroup, onExportSelection,
+  onAnchorText, mode, selectedCount, selectionIsGrouped, onGroup, onUngroup, onExportSelection,
 }: FloatingPaletteProps) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -49,6 +53,15 @@ export function FloatingPalette({
   const [alpha, setAlpha] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerText, setComposerText] = useState('');
+
+  /** Place the composer text on the canvas and reset the field. */
+  const anchor = useCallback(() => {
+    const body = composerText.trim();
+    if (!body) return;
+    onAnchorText(body);
+    setComposerText('');
+    setComposerOpen(false);
+  }, [composerText, onAnchorText]);
   const paletteRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
 
@@ -275,32 +288,47 @@ export function FloatingPalette({
                 Format
               </p>
               <div className="space-y-1.5">
-                {/* Primary: traced paths. The only SVG that renders correctly
-                    everywhere, so it leads. */}
+                {/* Primary SVG. In dots mode this is the traced export; in
+                    freehand, strokes are already filter-free so it's the same
+                    file either way — hence only one SVG option there. */}
                 <button
                   onClick={() => { onExportEmbeddedSVG(alpha); setExportOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
-                  title="Merged shape traced into real vector paths — no SVG filter, so it looks identical in Figma"
+                  // min-h keeps both SVG options the same size even though one
+                  // carries a badge — unequal tiles read as unequal importance.
+                  className="w-full min-h-[52px] flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left bg-primary text-primary-foreground hover:opacity-90 transition-opacity"
+                  title="Vector paths with no SVG filter — looks the same in Figma, Illustrator, Inkscape and any browser"
                 >
                   <Download size={13} className="flex-shrink-0" />
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[11px] font-medium leading-snug">SVG — Vector</span>
-                    <span className="block text-[9px] opacity-75 leading-snug mt-0.5">Works in Figma</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium leading-snug">SVG</span>
+                      <span className="px-1 py-px rounded bg-white/25 text-[8px] font-medium uppercase tracking-wide">
+                        Best
+                      </span>
+                    </span>
+                    <span className="block text-[9px] opacity-80 leading-snug mt-0.5 truncate">
+                      Works everywhere
+                    </span>
                   </span>
                 </button>
 
-                {/* Secondary: filter-based, keeps every dot as its own element */}
-                <button
-                  onClick={() => { onExportSVG(alpha); setExportOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left bg-secondary text-foreground hover:bg-secondary/70 transition-colors"
-                  title="Each dot stays a separate editable element, merged via an SVG filter. Figma cannot render this filter."
-                >
-                  <Download size={13} className="flex-shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-[11px] font-medium leading-snug">SVG — Editable dots</span>
-                    <span className="block text-[9px] text-muted-foreground leading-snug mt-0.5">Not supported in Figma</span>
-                  </span>
-                </button>
+                {/* Dots only: filter-based, keeps every dot as its own element.
+                    Hidden in freehand, where it would download an identical file. */}
+                {mode === 'dots' && (
+                  <button
+                    onClick={() => { onExportSVG(alpha); setExportOpen(false); }}
+                    className="w-full min-h-[52px] flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left bg-secondary text-foreground hover:bg-secondary/70 transition-colors"
+                    title="Keeps every dot as its own shape so you can still edit them individually. Uses an SVG filter for the merge, which Figma cannot render."
+                  >
+                    <Download size={13} className="flex-shrink-0" />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[11px] font-medium leading-snug truncate">Editable dots</span>
+                      <span className="block text-[9px] text-muted-foreground leading-snug mt-0.5 truncate">
+                        Not for Figma
+                      </span>
+                    </span>
+                  </button>
+                )}
 
                 <div className="flex gap-1.5 pt-1">
                   <button
@@ -361,10 +389,14 @@ export function FloatingPalette({
                   onChange={e => setComposerText(e.target.value)}
                   placeholder="Type your label or annotation…"
                   className="w-full bg-secondary border border-border rounded-lg px-2.5 py-2 text-xs text-foreground focus:outline-none focus:border-primary resize-none leading-relaxed"
-                  onKeyDown={e => { if (e.key === 'Escape') setComposerOpen(false); }}
+                  onKeyDown={e => {
+                    if (e.key === 'Escape') setComposerOpen(false);
+                    // Enter anchors; Shift+Enter adds a line.
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); anchor(); }
+                  }}
                 />
                 <p className="text-[9px] text-muted-foreground leading-relaxed">
-                  Text is anchored to the current canvas view. Use it to label artwork or compose multi-line annotations.
+                  Anchors at the centre of your current view. Enter to place, Shift+Enter for a new line. Erase it with the Eraser tool.
                 </p>
                 <div className="flex gap-1.5">
                   <button
@@ -375,12 +407,20 @@ export function FloatingPalette({
                     Clear
                   </button>
                   <button
-                    onClick={() => setComposerOpen(false)}
-                    className="flex-1 py-1.5 rounded-lg text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    onClick={() => { anchor(); }}
+                    disabled={!composerText.trim()}
+                    className="flex-1 py-1.5 rounded-lg text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     Anchor ↩
                   </button>
                 </div>
+              </div>
+
+              {/* Work-in-progress marker: text places and exports, but is not
+                  yet saved with the file and can't be edited once anchored. */}
+              <div className="flex items-center gap-1.5 px-3 py-2 border-t border-border bg-muted/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                <span className="text-[9px] text-muted-foreground">Currently building</span>
               </div>
             </div>
           )}
